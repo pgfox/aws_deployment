@@ -85,18 +85,18 @@ def create_key_pair(ec2_client, key_name: str, key_path: Path) -> None:
 
 def find_public_subnet(ec2_client, vpc_id: str) -> str:
     """
-    Return the ID of the single public subnet (MapPublicIpOnLaunch = True) within the VPC.
-    Raises ValueError if zero or multiple public subnets are found.
+    Return the ID of the single subnet tagged Tier=public within the VPC.
+    Raises ValueError if zero or multiple such subnets are found.
     """
     response = ec2_client.describe_subnets(
         Filters=[
             {"Name": "vpc-id", "Values": [vpc_id]},
-            {"Name": "map-public-ip-on-launch", "Values": ["true"]},
+            {"Name": "tag:Tier", "Values": ["public"]},
         ]
     )
     subnets = response["Subnets"]
     if not subnets:
-        raise ValueError("No public subnet (MapPublicIpOnLaunch=True) found in the VPC.")
+        raise ValueError("No subnet tagged Tier=public found in the VPC.")
     if len(subnets) > 1:
         raise ValueError(
             f"Expected a single public subnet but found {len(subnets)}. "
