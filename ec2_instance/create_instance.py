@@ -25,6 +25,7 @@ import argparse
 import os
 import sys
 from pathlib import Path
+from textwrap import dedent
 
 import boto3
 from botocore.exceptions import ClientError
@@ -50,6 +51,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--security-group-name", default="pf1-public-sg", help="Security group name.")
     parser.add_argument("--instance-type", default="t3.micro", help="Instance type (default tiny instance t3.micro).")
     parser.add_argument("--instance-name", default="pf1-ec2-instance", help="Tag Name for the instance.")
+    parser.add_argument(
+        "--test-s3-bucket",
+        required=True,
+        help="S3 bucket used by the on-instance test script.",
+    )
     args = parser.parse_args()
 
     if not args.vpc_id:
@@ -125,6 +131,63 @@ def get_security_group_id(ec2_client, group_name: str, vpc_id: str) -> str:
     print(f"Using security group '{group_name}' ({group_id})")
     return group_id
 
+
+def build_user_data(bucket_name: str) -> str:
+    """Create user-data script that installs boto3 and writes the S3 test helper."""
+    s3_test_script = f"""#!/usr/bin/env python3
+import argparse
+import uuid
+from datetime import datetime
+from pathlib import Path
+
+import boto3
+
+DEFAULT_BUCKET = "{bucket_name}"
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Upload and download a test file from S3.")
+    parser.add_argument("--bucket", default=DEFAULT_BUCKET, help="S3 bucket to use.")
+    parser.add_argument("--key", default=None, help="Optional object key. Defaults to random.")
+    args = parser.parse_args()
+
+    bucket = args.bucket
+    key = args.key or f"s3-test-{{uuid.uuid4().hex}}.txt"
+
+    payload = f"Test data generated at {{datetime.utcnow().isoformat()}}"
+    upload_path = Path("/tmp/s3_test_upload.txt")
+    upload_path.write_text(payload)
+
+    s3 = boto3.client("s3")
+    s3.upload_file(str(upload_path), bucket, key)
+    print(f"Uploaded {{key}} to {{bucket}} from {{upload_path}}")
+
+    download_path = Path("/tmp/s3_test_download.txt")
+    s3.download_file(bucket, key, str(download_path))
+    print(f"Downloaded object to {{download_path}}")
+    print("Downloaded contents:")
+    print(download_path.read_text())
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+    return dedent(
+        f"""#!/bin/bash
+        set -xeuo pipefail
+
+        apt-get update -y
+        apt-get install -y python3-boto3 python3-venv python3-pip
+
+        cat <<'PYCODE' >/home/ubuntu/s3_bucket_test.py
+{s3_test_script}
+PYCODE
+        chown ubuntu:ubuntu /home/ubuntu/s3_bucket_test.py
+        chmod +x /home/ubuntu/s3_bucket_test.py
+        """
+    )
+
 def launch_instance(
     ec2_resource,
     ami_id: str,
@@ -133,9 +196,10 @@ def launch_instance(
     key_name: str,
     instance_type: str,
     instance_name: str,
+    user_data: str | None = None,
 ) -> str:
     """Launch a single EC2 instance and return its ID."""
-    instances = ec2_resource.create_instances(
+    params = dict(
         ImageId=ami_id,
         InstanceType=instance_type,
         KeyName=key_name,
@@ -156,6 +220,10 @@ def launch_instance(
             }
         ],
     )
+    if user_data:
+        params["UserData"] = user_data
+
+    instances = ec2_resource.create_instances(**params)
 
     instance_id = instances[0].id
     print(f"Instance launch initiated. Instance ID: {instance_id}")
@@ -174,6 +242,8 @@ def main() -> None:
     subnet_id = args.subnet_id or find_public_subnet(ec2_client, args.vpc_id)
     group_id = get_security_group_id(ec2_client, args.security_group_name, args.vpc_id)
 
+    user_data = build_user_data(args.test_s3_bucket)
+
     instance_id = launch_instance(
         ec2_resource=ec2_resource,
         ami_id=args.ami_id,
@@ -182,6 +252,7 @@ def main() -> None:
         key_name=args.key_name,
         instance_type=args.instance_type,
         instance_name=args.instance_name,
+        user_data=user_data,
     )
 
     print("EC2 instance provisioning submitted. Monitor progress in the AWS console or with describe-instances.")
