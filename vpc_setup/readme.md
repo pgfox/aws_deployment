@@ -19,3 +19,51 @@ The `create_vpc.py` script provisions the following AWS networking resources in 
 3. Association of workloads with `pf1-public-sg`, which opens the necessary inbound ports.
 
 All three elements are required for resources in `pf1-subnet-1` to be reachable from the internet. Instances placed in `pf1-subnet-2` remain private unless you add additional routing and security rules.
+
+```
+                          AWS Region
+                              |
+                              v
+                      +----------------+
+                      |    VPC         |
+                      |   pf1-vpc      |
+                      +-------+--------+
+                              |
+                +-------------+--------------+
+                |                            |
+        +-------+--------+          +--------+-------+
+        | Public Subnet  |          | Private Subnet |
+        | pf1-subnet-1   |          | pf1-subnet-2   |
+        | Tier=public    |          | Tier=private   |
+        +-------+--------+          +----------------+
+                |                           |
+        MapPublicIpOnLaunch           No public routing
+                |
+                v
+        +-------------------+
+        | Route Table       |
+        | pf1-public-rt     |
+        | 0.0.0.0/0 -> IGW  |
+        +---------+---------+
+                  |
+                  v
+        +-------------------+
+        | Internet Gateway  |
+        |     pf1-igw       |
+        +-------------------+
+                  ^
+                  |
+                  VPC attachment
+
+Within the public subnet:
+
+  +---------------------------+
+  | pf1-public-sg             |
+  | (SSH/HTTP/HTTPS allowed)  |
+  +-------------+-------------+
+                |
+                v
+            EC2 instances
+
+Private subnet resources stay isolated unless additional NAT/route tables are added.
+```

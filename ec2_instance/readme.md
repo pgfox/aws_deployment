@@ -58,6 +58,38 @@ Behind the scenes the script handles IAM propagation delays before calling `asso
 
 This chain ensures the EC2 instance never needs static AWS keys; instead, AWS rotates short-lived credentials bound by the IAM role permissions, keeping the S3 interaction secure and auditable.
 
+```
+                   +--------------------------+
+                   |        IAM Policy        |
+                   |  (S3 read/write perms)   |
+                   +------------+-------------+
+                                |
+                                v
+                     +---------------------+
+                     |      IAM Role       |
+                     |  (Assumed by EC2)   |
+                     +----------+----------+
+                                |
+                                v
+                     +---------------------+
+                     |  Instance Profile   |
+                     | (attached to EC2)   |
+                     +----------+----------+
+                                |
+                                v
+                   +---------------------------+
+                   |         EC2 Instance      |
+                   |  runs s3_bucket_test.py   |
+                   +-------------+-------------+
+                                 |
+            Temporary creds via IMDS (boto3) |
+                                 v
+                      +-------------------+
+                      |   S3 Bucket       |
+                      | test uploads/downloads |
+                      +-------------------+
+```
+
 ## Example: SSH Into the Instance
 
 ```bash
